@@ -16,5 +16,5 @@ target_sources(app
 		BASE_DIRS include
 		FILES ${app_INC})
 
-target_link_libraries(app PUBLIC wayland-client wayland-cursor)
-
+target_link_libraries(app PUBLIC wayland-client) # wayland-cursor)
+target_compile_options(app PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wno-unused-parameter)
