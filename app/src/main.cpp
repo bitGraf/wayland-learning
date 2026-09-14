@@ -4,12 +4,29 @@
 
 // wayland headers
 #include <wayland-client.h>
+#include <string.h>
 
-static void registry_handle_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
-	printf("interface: '%s', version: %d, name: %d\n", interface, version, name);
-}
+// global state variable
+struct our_state {
+	wl_compositor* compositor;
+};
+
+// 5.1 binding to globals
+//static void registry_handle_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
+//	printf("interface: '%s', version: %d, name: %d\n", interface, version, name);
+//}
 static void registry_handle_global_remove(void* data, wl_registry* registry, uint32_t name) {
 	// do nothing
+}
+
+// 6.1 wl_compositor
+static void registry_handle_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
+	our_state* state = (our_state*)data;
+	if (strcmp(interface, wl_compositor_interface.name) == 0) { // check for the wl_compositor being registered
+		printf("interface: '%s', version: %d, name: %d\n", interface, version, name);
+		//state->compositor = wl_registry_bind(
+		//	registry, name, &wl_compositor_interface, 4);
+	}
 }
 
 int main(int argc, char* argv[]) {
@@ -29,13 +46,20 @@ int main(int argc, char* argv[]) {
 	}
 	fprintf(stdout, "Registry retrieved!\n");
 
+	our_state state = {};
 	wl_registry_listener registry_listener;
 	registry_listener.global = registry_handle_global;
 	registry_listener.global_remove = registry_handle_global_remove;
-	wl_registry_add_listener(registry, &registry_listener, NULL);
+	wl_registry_add_listener(registry, &registry_listener, &state);
 	fprintf(stdout, "registry listener attached.\n");
 	fprintf(stdout, "%d events occured.\n", wl_display_roundtrip(display));
-	fprintf(stdout, "%d events occured.\n", wl_display_roundtrip(display));
+	//wl_proxy_destroy((wl_proxy*)registry);
+	//fprintf(stdout, "%d events occured.\n", wl_display_roundtrip(display));
+	
+
+	// create wl_surface
+	printf("Creating a wl_surface.\n");
+	wl_surface* surface = wl_compositor_create_surface(state.compositor);
 	
 
 	#if 0
