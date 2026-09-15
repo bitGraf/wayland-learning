@@ -8,6 +8,11 @@ message("Config generated with: ${CMAKE_GENERATOR}")
 message("Project built with C++ compiler: ${CMAKE_CXX_COMPILER}")
 message("Project built with C compiler: ${CMAKE_C_COMPILER}")
 
+# find dependencies
+list(APPEND CMAKE_PREFIX_PATH "~/dev/vulkan-libs/")
+#message(STATUS ${CMAKE_MODULE_PATH})
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 23)
