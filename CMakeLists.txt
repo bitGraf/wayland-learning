@@ -1,20 +1,24 @@
 cmake_minimum_required(VERSION 3.31)
 
-project(wayland_proj VERSION 1.0.0 LANGUAGES CXX)
+list(APPEND CMAKE_MESSAGE_INDENT "  ")
 
-message(STATUS "Config generated with: ${CMAKE_GENERATOR}")
+project(wayland_proj VERSION 1.0.0 LANGUAGES C CXX)
+
+message("Config generated with: ${CMAKE_GENERATOR}")
+message("Project built with C++ compiler: ${CMAKE_CXX_COMPILER}")
+message("Project built with C compiler: ${CMAKE_C_COMPILER}")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-# set(CMAKE_CXX_EXTENSIONS OFF)
+# set(CMAKE_CXX_EXTENSIONS ON)
 
 set(OUTPUT_DIR "${CMAKE_BINARY_DIR}/../bin")
 cmake_path(NORMAL_PATH OUTPUT_DIR)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR})
-message(STATUS "Build files going into: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+message("Build files going into: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
 add_subdirectory(app)

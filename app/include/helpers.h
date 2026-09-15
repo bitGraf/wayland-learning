@@ -1,7 +1,6 @@
 #ifndef __HELPERS_H__
 #define __HELPERS_H__
 
-#define _POSIX_C_SOURCE 200112L 
 #include <stdint.h>
 #include <stddef.h>
 

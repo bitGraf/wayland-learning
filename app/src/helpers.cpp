@@ -1,5 +1,9 @@
 #include "helpers.h"
 
+#ifndef _POSIX_C_SOURCE
+	#warning "_POSIX_C_SOURCE not defined!"
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -13,7 +17,7 @@ void sleep_ms(long milliseconds) {
 	ts.tv_sec = milliseconds / 1'000;
 	ts.tv_nsec = (milliseconds % 1'000) * 1'000'000;
 
-	printf("ms: %ld    sec:%ld    ns:%ld\n", milliseconds, ts.tv_sec, ts.tv_nsec);	
+	// printf("ms: %ld    sec:%ld    ns:%ld\n", milliseconds, ts.tv_sec, ts.tv_nsec);	
 
 	nanosleep(&ts, NULL);
 }
@@ -30,7 +34,7 @@ static void randname(char* buf) {
 	clock_gettime(CLOCK_REALTIME, &ts);
 	long r = ts.tv_nsec;
 	for (int i = 0; i < 6; ++i) {
-		buf[i] = 'A'+(r&15)+(r&16)*2;
+		buf[i] = 'A'+static_cast<char>((r&15)+(r&16)*2);
 		r >>= 5;
 	}
 }
@@ -43,6 +47,7 @@ static int create_shm_file(void) {
 		int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
 		if (fd >= 0) {
 			shm_unlink(name);
+			// printf("shm file opened: %s\n", name);
 			return fd;
 		}
 	} while (retries > 0 && errno == EEXIST);
