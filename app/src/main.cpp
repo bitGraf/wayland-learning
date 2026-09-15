@@ -31,6 +31,8 @@ if (result != VK_SUCCESS) { \
 	printf("Error executing %s: %i\n", #_expr, result); \
 }
 
+#define GET_EXTENSION_FUNCTION(_instance, _id) ((PFN_##_id)(vkGetInstanceProcAddr(_instance, #_id)))
+
 // global state variable
 struct client_state {
 	// wayland
@@ -46,6 +48,7 @@ struct client_state {
 
 	// Vulkan
 	VkInstance instance;
+	VkDebugUtilsMessengerEXT debugMessenger;
 	VkPhysicalDevice phys_device;
 	VkDevice device;
 	VkQueue queue;
@@ -101,6 +104,14 @@ static const xdg_toplevel_listener _xdg_toplevel_listener = {
 };
 
 
+// Vulkan debug utils error handler
+static VkBool32 onVulkanError(
+	VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+	VkDebugUtilsMessageTypeFlagsEXT type,
+	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
+	void* userData);
+
+
 int main(int argc, char* argv[]) {
 	client_state state = {};
 
@@ -153,13 +164,22 @@ int main(int argc, char* argv[]) {
 			"VK_KHR_surface",
 			"VK_KHR_wayland_surface"
 		};
-		VkInstanceCreateInfo createInfo {
+		VkInstanceCreateInfo instanceCreateInfo {
 			.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 			.pApplicationInfo = &appInfo,
 			.enabledExtensionCount = sizeof(instanceExtensionNames) / sizeof(const char*),
 			.ppEnabledExtensionNames = instanceExtensionNames
 		};
-		CHECK_VK_RESULT(vkCreateInstance(&createInfo, nullptr, &state.instance));
+		CHECK_VK_RESULT(vkCreateInstance(&instanceCreateInfo, nullptr, &state.instance));
+
+		// setup validation layers
+		VkDebugUtilsMessengerCreateInfoEXT debugLayersCreateInfo {
+			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+			.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+			.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+			.pfnUserCallback = onVulkanError,
+		};
+		CHECK_VK_RESULT(GET_EXTENSION_FUNCTION(state.instance, vkCreateDebugUtilsMessengerEXT)(state.instance, &debugLayersCreateInfo, nullptr, &state.debugMessenger));
 
 		uint32_t deviceCount = 0;
 		CHECK_VK_RESULT(vkEnumeratePhysicalDevices(state.instance, &deviceCount, nullptr));
@@ -362,4 +382,50 @@ static void __xdg_toplevel_handle_close(void* data, xdg_toplevel* toplevel) {
 	client_state* state = (client_state*)data;
 
 	state->done = true;
+}
+
+
+
+
+// Vulkan debug utils error handler
+static VkBool32 onVulkanError(
+	VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+	VkDebugUtilsMessageTypeFlagsEXT type,
+	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
+	void* userData) {
+
+	printf("Vulkan ");
+
+	switch(type) {
+		case VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT: {
+			printf("general ");
+		} break;
+		case VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT: {
+			printf("validation ");
+		} break;
+		case VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT: {
+			printf("performance ");
+		} break;
+	}
+
+	switch(severity) {
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: {
+			printf("(verbose): ");
+		} break;
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT: {
+			printf("(info): ");
+		} break;
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: {
+			printf("(warning): ");
+		} break;
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT: {
+			printf("(error): ");
+		} break;
+
+		default: {} break;
+	}
+
+	printf("%s\n", callbackData->pMessage);
+
+	return 0;
 }
