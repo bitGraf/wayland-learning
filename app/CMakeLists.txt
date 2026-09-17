@@ -31,6 +31,6 @@ target_sources(app
 		BASE_DIRS include
 		FILES ${app_INC})
 
-target_link_libraries(app PUBLIC wayland-client vulkan GPUOpen::VulkanMemoryAllocator)
+target_link_libraries(app PUBLIC wayland-client vulkan GPUOpen::VulkanMemoryAllocator glm::glm)
 target_compile_options(app PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wno-unused-parameter -Wno-unused-variable -Wno-attributes -Wno-missing-designated-field-initializers)
 target_compile_definitions(app PRIVATE _POSIX_C_SOURCE=200112L)

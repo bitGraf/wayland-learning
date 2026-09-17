@@ -12,6 +12,7 @@ message("Project built with C compiler: ${CMAKE_C_COMPILER}")
 list(APPEND CMAKE_PREFIX_PATH "~/dev/vulkan-libs/")
 #message(STATUS ${CMAKE_MODULE_PATH})
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
