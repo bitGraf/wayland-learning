@@ -13,6 +13,9 @@ list(APPEND CMAKE_PREFIX_PATH "~/dev/vulkan-libs/")
 #message(STATUS ${CMAKE_MODULE_PATH})
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(tinyobjloader CONFIG REQUIRED)
+get_property(targets_list DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY IMPORTED_TARGETS)
+# message(STATUS "imported targets: [${targets_list}]")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

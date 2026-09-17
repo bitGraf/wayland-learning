@@ -21,6 +21,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <tiny_obj_loader.h>
 // wayland headers
 #include <wayland-client.h>
 #include "xdg/xdg-shell.h"
