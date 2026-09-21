@@ -22,6 +22,11 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <tiny_obj_loader.h>
+
+// KTX
+#include <ktx.h>
+#include <ktxvulkan.h>
+
 // wayland headers
 #include <wayland-client.h>
 #include "xdg/xdg-shell.h"
