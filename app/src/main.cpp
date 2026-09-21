@@ -41,7 +41,7 @@ if (!(_expr)) { \
 #define CHECK_VK_RESULT(_expr) \
 result = _expr; \
 if (result != VK_SUCCESS) { \
-	printf("Error executing %s: %i\n", #_expr, result); \
+	printf("Error executing %s on line %d: %i\n", #_expr, __LINE__, result); \
 }
 
 #define GET_EXTENSION_FUNCTION(_instance, _id) ((PFN_##_id)(vkGetInstanceProcAddr(_instance, #_id)))
@@ -100,6 +100,7 @@ struct client_state {
 	VkBuffer vBuffer;
 	VmaAllocation vBufferAllocation;
 	ShaderData shaderData;
+	VkShaderModule shaderModule;
 	VkCommandPool commandPool;
 	struct Texture {
 		VmaAllocation allocation{ VK_NULL_HANDLE };
@@ -113,8 +114,13 @@ struct client_state {
 	VkDescriptorSet descriptorSetTex;
 	VkPipelineLayout pipelineLayout;
 	VkPipeline pipeline;
+	VkDeviceSize vBufSize;
+	VkDeviceSize iBufSize;
+	VkDeviceSize indexCount;   
 
 	// Vulkan per-frame resources
+	uint32_t frameIndex {0};
+	uint32_t imageIndex {0};
 	std::array<ShaderDataBuffer, maxFramesInFlight> shaderDataBuffers;
 	std::array<VkCommandBuffer, maxFramesInFlight> commandBuffers;
 	std::array<VkFence, maxFramesInFlight> fences;
@@ -127,6 +133,9 @@ struct client_state {
 	bool ready_to_resize = false;
 	int32_t new_width = 0;
 	int32_t new_height = 0;
+	bool updateSwapchain = false;
+
+	glm::ivec2 windowSize;
 };
 
 // mesh loading
@@ -342,6 +351,9 @@ int main(int argc, char* argv[]) {
 			.surface = state.surface
 		};
 		CHECK_VK_RESULT(vkCreateWaylandSurfaceKHR(state.instance, &createInfo, NULL, &state.vulkan_surface));
+		state.windowSize.x = 900;
+		state.windowSize.y = 600;
+		printf("Window size: (%d, %d)\n", state.windowSize.x, state.windowSize.y);
 
 		VkSurfaceCapabilitiesKHR surfaceCaps;
 		CHECK_VK_RESULT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state.phys_device, state.vulkan_surface, &surfaceCaps));
@@ -353,7 +365,7 @@ int main(int argc, char* argv[]) {
 			.minImageCount = surfaceCaps.minImageCount,
 			.imageFormat = imageFormat,
 			.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
-			.imageExtent { .width = 900, .height = 600 },
+			.imageExtent { .width = (uint32_t)state.windowSize.x, .height = (uint32_t)state.windowSize.y },
 			.imageArrayLayers = 1,
 			.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
@@ -383,7 +395,7 @@ int main(int argc, char* argv[]) {
 			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			.imageType = VK_IMAGE_TYPE_2D,
 			.format = depthFormat,
-			.extent { .width = 900, .height = 600, .depth = 1},
+			.extent { .width = (uint32_t)state.windowSize.x, .height = (uint32_t)state.windowSize.y, .depth = 1},
 			.mipLevels = 1,
 			.arrayLayers = 1,
 			.samples = VK_SAMPLE_COUNT_1_BIT,
@@ -415,7 +427,7 @@ int main(int argc, char* argv[]) {
 			exit(-1);
 		}
 
-		const VkDeviceSize indexCount{shapes[0].mesh.indices.size()};   
+		state.indexCount = shapes[0].mesh.indices.size();
 		std::vector<Vertex> vertices{};
 		std::vector<uint16_t> indices{};
 		// Load vertex and index data
@@ -437,11 +449,11 @@ int main(int argc, char* argv[]) {
 		    indices.push_back(static_cast<uint16_t>(indices.size()));
 		}
 
-		VkDeviceSize vBufSize{ sizeof(Vertex) * vertices.size() };
-		VkDeviceSize iBufSize{ sizeof(uint16_t) * indices.size() };
+		state.vBufSize = sizeof(Vertex) * vertices.size();
+		state.iBufSize = sizeof(uint16_t) * indices.size();
 		VkBufferCreateInfo bufferCI{
 		    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		    .size = vBufSize + iBufSize,
+		    .size = state.vBufSize + state.iBufSize,
 		    .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
 		};
 
@@ -452,8 +464,8 @@ int main(int argc, char* argv[]) {
 		VmaAllocationInfo vBufferAllocInfo{};
 		CHECK_VK_RESULT(vmaCreateBuffer(state.allocator, &bufferCI, &vBufferAllocCI, &state.vBuffer, &state.vBufferAllocation, &vBufferAllocInfo));
 
-		memcpy(vBufferAllocInfo.pMappedData, vertices.data(), vBufSize);
-		memcpy(((char*)vBufferAllocInfo.pMappedData) + vBufSize, indices.data(), iBufSize);
+		memcpy(vBufferAllocInfo.pMappedData, vertices.data(), state.vBufSize);
+		memcpy(((char*)vBufferAllocInfo.pMappedData) + state.vBufSize, indices.data(), state.iBufSize);
 
 		for (uint32_t i = 0; i < maxFramesInFlight; i++) {
 		    VkBufferCreateInfo uBufferCI{
@@ -629,6 +641,8 @@ int main(int argc, char* argv[]) {
 			};
 			CHECK_VK_RESULT(vkQueueSubmit2(state.queue, 1, &oneTimeSI, fenceOneTime));
 			CHECK_VK_RESULT(vkWaitForFences(state.device, 1, &fenceOneTime, VK_TRUE, UINT64_MAX));
+			vkDestroyFence(state.device, fenceOneTime, nullptr);
+			vmaDestroyBuffer(state.allocator, imgSrcBuffer, imgSrcAllocation);
 
 			// create texture sampler
 			VkSamplerCreateInfo samplerCI {
@@ -718,8 +732,7 @@ int main(int argc, char* argv[]) {
 			.codeSize = shaderSrc.codeSize,
 			.pCode = shaderSrc.pCode
 		};
-		VkShaderModule shaderModule{};
-		CHECK_VK_RESULT(vkCreateShaderModule(state.device, &shaderModuleCI, nullptr, &shaderModule));
+		CHECK_VK_RESULT(vkCreateShaderModule(state.device, &shaderModuleCI, nullptr, &state.shaderModule));
 			
 		// create graphics pipeline
 		VkPushConstantRange pushConstantRange {
@@ -761,10 +774,10 @@ int main(int argc, char* argv[]) {
 		std::vector<VkPipelineShaderStageCreateInfo> shaderStages {
 			{ .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 			  .stage = VK_SHADER_STAGE_VERTEX_BIT,
-			  .module = shaderModule, .pName = "main" },
+			  .module = state.shaderModule, .pName = "main" },
 			{ .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 			  .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-			  .module = shaderModule, .pName = "main" },
+			  .module = state.shaderModule, .pName = "main" },
 		};
 
 		VkPipelineViewportStateCreateInfo viewportState {
@@ -830,21 +843,241 @@ int main(int argc, char* argv[]) {
 
 	// start main loop
 	printf("====================Start main event loop...==========================\n");
-	printf("  running...\n");
-	int count = 0;
-	while (!state.done) {
-		sleep_ms(100);
 
+	glm::vec3 objectRotations[3]{};
+	glm::vec3 camPos{0.0f, 0.0f, -6.0f};
+	ShaderData shaderData {};
+
+	printf("  running...\n");
+	uint64_t lastTime = get_time_ms();
+	uint64_t startTime = get_time_ms();
+	while (!state.done) {
+		VkResult result;
+
+		// Wait on fence
+		CHECK_VK_RESULT(vkWaitForFences(state.device, 1, &state.fences[state.frameIndex], true, UINT64_MAX));
+		CHECK_VK_RESULT(vkResetFences(state.device, 1, &state.fences[state.frameIndex]));
+
+		// Acquire next image
+		result = vkAcquireNextImageKHR(state.device, state.swapchain, UINT64_MAX, state.imageAcquiredSemaphores[state.frameIndex], VK_NULL_HANDLE, &state.imageIndex);
+		if (result < VK_SUCCESS) {
+			if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+				state.updateSwapchain = true;
+			} else {
+				printf("Error executing %s: %i\n", "vkAcquireNextImageKHR", result);
+			}
+		}
+
+		// Update shader data
+		shaderData.projection = glm::perspective(glm::radians(45.0f), (float)state.windowSize.x / (float)state.windowSize.y, 0.1f, 32.0f);
+		shaderData.view = glm::translate(glm::mat4(1.0f), camPos);
+		for (int i = 0; i < 3; i++) {
+			glm::vec3 instancePos = glm::vec3((float)(i-1) * 3.0f, 0.0f, 0.0f);
+			shaderData.model[i] = glm::translate(glm::mat4(1.0f), instancePos) * glm::mat4_cast(glm::quat(objectRotations[i]));
+		}
+		memcpy(state.shaderDataBuffers[state.frameIndex].allocationInfo.pMappedData, &state.shaderData, sizeof(ShaderData));
+
+		// Record command buffer
+		auto cb = state.commandBuffers[state.frameIndex];
+		CHECK_VK_RESULT(vkResetCommandBuffer(cb, 0));
+
+		VkCommandBufferBeginInfo cbBI {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+		};
+		CHECK_VK_RESULT(vkBeginCommandBuffer(cb, &cbBI));
+		
+		std::array<VkImageMemoryBarrier2, 2> outputBarriers {
+			VkImageMemoryBarrier2 {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+				.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+				.srcAccessMask = 0,
+				.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+				.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.newLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				.image = state.swapchainImages[state.imageIndex],
+				.subresourceRange { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
+			},
+			VkImageMemoryBarrier2 {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+				.srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+				.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+				.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.newLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+				.image = state.depthImage,
+				.subresourceRange { .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, .levelCount = 1, .layerCount = 1 }
+			},
+		};
+		VkDependencyInfo barrierDependencyInfo {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount = 2,
+			.pImageMemoryBarriers = outputBarriers.data()
+		};
+		vkCmdPipelineBarrier2(cb, &barrierDependencyInfo);
+
+		VkRenderingAttachmentInfo colorAttachmentInfo {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = state.swapchainImageViews[state.imageIndex],
+			.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.clearValue = { .color { {0.0f, 0.0f, 0.2f, 1.0f} } }
+		};
+		VkRenderingAttachmentInfo depthAttachmentInfo {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = state.depthImageView, 
+			.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.clearValue = { .depthStencil = {1.0f, 0} }
+		};
+
+		VkRenderingInfo renderingInfo {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+			.renderArea { .extent {.width = static_cast<uint32_t>(state.windowSize.x), .height = static_cast<uint32_t>(state.windowSize.y) } },
+			.layerCount = 1,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &colorAttachmentInfo,
+			.pDepthAttachment = &depthAttachmentInfo
+		};
+		vkCmdBeginRendering(cb, &renderingInfo);
+
+		VkViewport vp {
+			.width =static_cast<float>(state.windowSize.x),
+			.height = static_cast<float>(state.windowSize.y),
+			.minDepth = 0.0f,
+			.maxDepth = 1.0f
+		};
+		vkCmdSetViewport(cb, 0, 1, &vp);
+		VkRect2D scissor { .extent { .width = static_cast<uint32_t>(state.windowSize.x), .height = static_cast<uint32_t>(state.windowSize.y) } };
+		vkCmdSetScissor(cb, 0, 1, &scissor);
+
+		vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, state.pipeline);
+		VkDeviceSize vOffset {0};
+		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, state.pipelineLayout, 0, 1, &state.descriptorSetTex, 0, nullptr);
+		vkCmdBindVertexBuffers(cb, 0, 1, &state.vBuffer, &vOffset);
+		vkCmdBindIndexBuffer(cb, state.vBuffer, state.vBufSize, VK_INDEX_TYPE_UINT16);
+
+		vkCmdPushConstants(cb, state.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VkDeviceAddress), &state.shaderDataBuffers[state.frameIndex].deviceAddress);
+
+		vkCmdDrawIndexed(cb, static_cast<uint32_t>(state.indexCount), 3, 0, 0, 0);
+
+		vkCmdEndRendering(cb);
+
+		VkImageMemoryBarrier2 barrierPresent {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+			.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			.dstAccessMask = 0,
+			.oldLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+			.image = state.swapchainImages[state.imageIndex],
+			.subresourceRange { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
+		};
+		VkDependencyInfo barrierPresentDependencyInfo {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount = 1,
+			.pImageMemoryBarriers = &barrierPresent
+		};
+		vkCmdPipelineBarrier2(cb, &barrierPresentDependencyInfo);
+
+		vkEndCommandBuffer(cb);
+
+		// Submit command buffer
+		VkSemaphoreSubmitInfo waitSemaphoreInfo {
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+			.semaphore = state.imageAcquiredSemaphores[state.frameIndex],
+			.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
+		};
+		VkCommandBufferSubmitInfo commandBufferSubmitInfo {
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+			.commandBuffer = cb
+		};
+		VkSemaphoreSubmitInfo signalSemaphoreInfo {
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+			.semaphore = state.renderCompleteSemaphores[state.imageIndex],
+			.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
+		};
+		VkSubmitInfo2 submitInfo {
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+			.waitSemaphoreInfoCount = 1,
+			.pWaitSemaphoreInfos = &waitSemaphoreInfo,
+			.commandBufferInfoCount = 1,
+			.pCommandBufferInfos = &commandBufferSubmitInfo,
+			.signalSemaphoreInfoCount = 1,
+			.pSignalSemaphoreInfos = &signalSemaphoreInfo
+		};
+		CHECK_VK_RESULT(vkQueueSubmit2(state.queue, 1, &submitInfo, state.fences[state.frameIndex]));
+
+		state.frameIndex = (state.frameIndex + 1) % maxFramesInFlight;
+
+		// Present image
+		VkPresentInfoKHR presentInfo {
+			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+			.waitSemaphoreCount = 1,
+			.pWaitSemaphores = &state.renderCompleteSemaphores[state.imageIndex],
+			.swapchainCount = 1,
+			.pSwapchains = &state.swapchain,
+			.pImageIndices = &state.imageIndex
+		};	
+		result = vkQueuePresentKHR(state.queue, &presentInfo); 
+		if (result < VK_SUCCESS) {
+			if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+				state.updateSwapchain = true;
+			} else {
+				printf("Error executing %s: %i\n", "vkAcquireNextImageKHR", result);
+			}
+		}
+
+		// Poll events
+		float elapsedTime = static_cast<float>(get_time_ms() - lastTime) / 1000.0f;
+		float totalTime = static_cast<float>(get_time_ms() - startTime) / 1000.0f;
 		wl_display_roundtrip(state.display);
 
-		count++;
-		if (count > 5) break;
+		if (totalTime > 2.0f) {
+			state.done = true;
+		}
 	}
 	printf("  done.\n");
 	printf("======================================================================\n\n\n");
 
 	// Cleanup
 	printf("Cleaning up resources.\n");
+	VkResult result;
+	CHECK_VK_RESULT(vkDeviceWaitIdle(state.device));
+	for (uint32_t i = 0; i < maxFramesInFlight; i++) {
+		vkDestroyFence(state.device, state.fences[i], nullptr);
+		vkDestroySemaphore(state.device, state.imageAcquiredSemaphores[i], nullptr);
+		vmaDestroyBuffer(state.allocator, state.shaderDataBuffers[i].buffer, state.shaderDataBuffers[i].allocation);
+	}
+	for (uint32_t i = 0; i < state.renderCompleteSemaphores.size(); i++) {
+		vkDestroySemaphore(state.device, state.renderCompleteSemaphores[i], nullptr);
+	}
+	vmaDestroyImage(state.allocator, state.depthImage, state.depthImageAllocation);
+	vkDestroyImageView(state.device, state.depthImageView, nullptr);
+	for(uint32_t i = 0; i < state.swapchainImageViews.size(); i++) {
+		vkDestroyImageView(state.device, state.swapchainImageViews[i], nullptr);
+	}
+	vmaDestroyBuffer(state.allocator, state.vBuffer, state.vBufferAllocation);
+	for (uint32_t i = 0; i < state.textures.size(); i++) {
+		vkDestroyImageView(state.device, state.textures[i].view, nullptr);
+		vkDestroySampler(state.device, state.textures[i].sampler, nullptr);
+		vmaDestroyImage(state.allocator, state.textures[i].image, state.textures[i].allocation);
+	}
+	vkDestroyDescriptorSetLayout(state.device, state.descriptorSetLayoutTex, nullptr);
+	vkDestroyDescriptorPool(state.device, state.descriptorPool, nullptr);
+	vkDestroyPipelineLayout(state.device, state.pipelineLayout, nullptr);
+	vkDestroyPipeline(state.device, state.pipeline, nullptr);
+	vkDestroySwapchainKHR(state.device, state.swapchain, nullptr);
+	vkDestroySurfaceKHR(state.instance, state.vulkan_surface, nullptr);
+	vkDestroyCommandPool(state.device, state.commandPool, nullptr);
+	vkDestroyShaderModule(state.device, state.shaderModule, nullptr);
+	vmaDestroyAllocator(state.allocator);
+
 	xdg_toplevel_destroy(state.shell_toplevel);
 	xdg_surface_destroy(state.shell_surface);
 	wl_surface_destroy(state.surface);
@@ -852,6 +1085,9 @@ int main(int argc, char* argv[]) {
 	wl_compositor_destroy(state.compositor);
 	wl_registry_destroy(state.registry);
 	wl_display_disconnect(state.display);
+
+	vkDestroyDevice(state.device, nullptr);
+	vkDestroyInstance(state.instance, nullptr);
 
 	return 0;
 }
@@ -907,6 +1143,9 @@ static void __xdg_toplevel_handle_configure(void* data, xdg_toplevel* toplevel, 
 		state->resize = true;
 		state->new_width = width;
 		state->new_height = height;
+
+		state->windowSize.x = width;
+		state->windowSize.y = height;
 	}
 }
 static void __xdg_toplevel_handle_close(void* data, xdg_toplevel* toplevel) {

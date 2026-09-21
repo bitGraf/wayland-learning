@@ -24,3 +24,9 @@ void sleep_ns(long nanoseconds) {
 	nanosleep(&ts, NULL);
 }
 
+
+uint64_t get_time_ms() {
+	timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	return (uint64_t)ts.tv_sec * 1000 + ((uint64_t)ts.tv_nsec / 1'000'000);
+}
