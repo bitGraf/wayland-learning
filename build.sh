@@ -1,7 +1,8 @@
 #!/usr/bin/bash
 
 # setup directory structure
-# mkdir -p lbuild
+mkdir -p lbuild
+mkdir -p bin
 
 # setup build variables
 # generator="Unix Makefiles"
@@ -21,6 +22,15 @@ fi
 echo -e "$S[Generate wayland headers]$E"
 wayland-scanner client-header < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > app/include/xdg/xdg-shell.h
 wayland-scanner private-code < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > app/src/xdg/xdg-shell.c
+
+# precompile shaders
+echo -e "$S[Precompile Shaders]$E"
+shopt -s nullglob
+for file in ./assets/*.slang; do
+	printf "  > $file..."
+	slangc $file -target spirv -o bin/shader.spv
+	printf "done\n"
+done
 
 # cmake -S . -B lbuild -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 echo -e "$S[Configuring]$E"

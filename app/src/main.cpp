@@ -46,6 +46,14 @@ if (result != VK_SUCCESS) { \
 
 #define GET_EXTENSION_FUNCTION(_instance, _id) ((PFN_##_id)(vkGetInstanceProcAddr(_instance, #_id)))
 
+struct ShaderSpirvSource {
+	const uint32_t* pCode;
+	size_t codeSize;
+};
+int load_spirv_from_file(const char* filename, ShaderSpirvSource& shaderSrc);
+void free_spirv_code(ShaderSpirvSource& shaderSrc);
+
+
 struct ShaderData {
     glm::mat4 projection;
     glm::mat4 view;
@@ -695,6 +703,23 @@ int main(int argc, char* argv[]) {
 			.pImageInfo = textureDescriptors.data()
 		};
 		vkUpdateDescriptorSets(state.device, 1, &writeDescSet, 0, nullptr);
+
+		// load shaders
+		ShaderSpirvSource shaderSrc;
+		if(!load_spirv_from_file("shader.spv", shaderSrc)) {
+			fprintf(stderr, "Failed to load shader source %s!\n", "shader.spv");
+			exit(-1);
+		}
+
+		VkShaderModuleCreateInfo shaderModuleCI {
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = shaderSrc.codeSize,
+			.pCode = shaderSrc.pCode
+		};
+		VkShaderModule shaderModule{};
+		CHECK_VK_RESULT(vkCreateShaderModule(state.device, &shaderModuleCI, nullptr, &shaderModule));
+			
+		
 	}
 
 	printf("======================================================================\n\n\n");
@@ -830,4 +855,44 @@ static VkBool32 onVulkanError(
 	printf("%s\n", callbackData->pMessage);
 
 	return 0;
+}
+
+// helper function to load a spirv blob from file
+int load_spirv_from_file(const char* filename, ShaderSpirvSource& shaderSrc) {
+	FILE* fp = fopen(filename, "rb");
+	if (!fp) {
+		return -1;
+	}
+
+	fseek(fp, 0, SEEK_END);
+	size_t size = static_cast<size_t>(ftell(fp));
+	fseek(fp, 0, SEEK_SET);
+
+	char* buffer = (char*)malloc(size);
+	if (!buffer) {
+		fclose(fp);
+		return -1;
+	}
+
+	size_t read_bytes = fread(buffer, 1, size, fp);
+	if (read_bytes != size) {
+		fprintf(stderr, "Failed to read entire file: %s\n", filename);
+		free(buffer);
+		fclose(fp);
+		return -1;
+	}
+
+	fclose(fp);
+
+	shaderSrc.pCode = (const uint32_t*)buffer;
+	shaderSrc.codeSize = size;
+	return 0;
+}
+
+void free_spirv_code(ShaderSpirvSource& shaderSrc) {
+	if (shaderSrc.pCode) {
+		free((void*)shaderSrc.pCode);
+		shaderSrc.pCode = nullptr;
+	}
+	shaderSrc.codeSize = 0;
 }
