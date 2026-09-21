@@ -46,7 +46,23 @@ if (result != VK_SUCCESS) { \
 
 #define GET_EXTENSION_FUNCTION(_instance, _id) ((PFN_##_id)(vkGetInstanceProcAddr(_instance, #_id)))
 
+struct ShaderData {
+    glm::mat4 projection;
+    glm::mat4 view;
+    glm::mat4 model[3];
+    glm::vec4 lightPos{ 0.0f, -10.0f, 10.0f, 0.0f };
+    uint32_t selected{1};
+};
+
+struct ShaderDataBuffer {
+	VmaAllocation allocation{ VK_NULL_HANDLE };
+	VmaAllocationInfo allocationInfo{};
+	VkBuffer buffer{ VK_NULL_HANDLE };
+	VkDeviceAddress deviceAddress{};
+};
+
 // global state variable
+constexpr uint32_t maxFramesInFlight {3};
 struct client_state {
 	// wayland
 	wl_display* display;
@@ -75,6 +91,25 @@ struct client_state {
     VmaAllocation depthImageAllocation;
 	VkBuffer vBuffer;
 	VmaAllocation vBufferAllocation;
+	ShaderData shaderData;
+	VkCommandPool commandPool;
+	struct Texture {
+		VmaAllocation allocation{ VK_NULL_HANDLE };
+		VkImage image{ VK_NULL_HANDLE };
+		VkImageView view{ VK_NULL_HANDLE };
+		VkSampler sampler{ VK_NULL_HANDLE };
+	};
+	std::array<Texture, 3> textures{};
+	VkDescriptorSetLayout descriptorSetLayoutTex;
+	VkDescriptorPool descriptorPool;
+	VkDescriptorSet descriptorSetTex;
+
+	// Vulkan per-frame resources
+	std::array<ShaderDataBuffer, maxFramesInFlight> shaderDataBuffers;
+	std::array<VkCommandBuffer, maxFramesInFlight> commandBuffers;
+	std::array<VkFence, maxFramesInFlight> fences;
+	std::array<VkSemaphore, maxFramesInFlight> imageAcquiredSemaphores;
+	std::vector<VkSemaphore> renderCompleteSemaphores;
 
 	// program control
 	bool done = false;
@@ -290,10 +325,6 @@ int main(int argc, char* argv[]) {
 			.instance = state.instance
 		};
 		CHECK_VK_RESULT(vmaCreateAllocator(&allocatorCreateInfo, &state.allocator));
-	}
-	// create wayland/vulkan surface
-	{
-		VkResult result;
 
 		VkWaylandSurfaceCreateInfoKHR createInfo {
 			.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR,
@@ -364,10 +395,6 @@ int main(int argc, char* argv[]) {
 		    .subresourceRange{ .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .levelCount = 1, .layerCount = 1 }
 		};
 		CHECK_VK_RESULT(vkCreateImageView(state.device, &depthViewCreateInfo, nullptr, &state.depthImageView));
-	}
-
-	{
-		VkResult result;
 
 		// load mesh
 		tinyobj::attrib_t attrib;
@@ -384,12 +411,20 @@ int main(int argc, char* argv[]) {
 		// Load vertex and index data
 		for (auto& index : shapes[0].mesh.indices) {
 		    Vertex v{
-		        .pos = { attrib.vertices[index.vertex_index * 3], -attrib.vertices[index.vertex_index * 3 + 1], attrib.vertices[index.vertex_index * 3 + 2] },
-		        .normal = { attrib.normals[index.normal_index * 3], -attrib.normals[index.normal_index * 3 + 1], attrib.normals[index.normal_index * 3 + 2] },
-		        .uv = { attrib.texcoords[index.texcoord_index * 2], 1.0 - attrib.texcoords[index.texcoord_index * 2 + 1] }
+		        .pos = { 
+					 attrib.vertices[static_cast<size_t>(index.vertex_index * 3)], 
+					-attrib.vertices[static_cast<size_t>(index.vertex_index * 3 + 1)], 
+					 attrib.vertices[static_cast<size_t>(index.vertex_index * 3 + 2)] },
+		        .normal = { 
+					 attrib.normals[static_cast<size_t>(index.normal_index * 3)], 
+					-attrib.normals[static_cast<size_t>(index.normal_index * 3 + 1)], 
+					 attrib.normals[static_cast<size_t>(index.normal_index * 3 + 2)] },
+		        .uv = { 
+						  attrib.texcoords[static_cast<size_t>(index.texcoord_index * 2)], 
+					1.0 - attrib.texcoords[static_cast<size_t>(index.texcoord_index * 2 + 1)] }
 		    };
 		    vertices.push_back(v);
-		    indices.push_back(indices.size());
+		    indices.push_back(static_cast<uint16_t>(indices.size()));
 		}
 
 		VkDeviceSize vBufSize{ sizeof(Vertex) * vertices.size() };
@@ -409,9 +444,257 @@ int main(int argc, char* argv[]) {
 
 		memcpy(vBufferAllocInfo.pMappedData, vertices.data(), vBufSize);
 		memcpy(((char*)vBufferAllocInfo.pMappedData) + vBufSize, indices.data(), iBufSize);
-	}
 
-	{
+		for (uint32_t i = 0; i < maxFramesInFlight; i++) {
+		    VkBufferCreateInfo uBufferCI{
+		        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		        .size = sizeof(ShaderData),
+		        .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+		    };
+		    VmaAllocationCreateInfo uBufferAllocCI{
+		        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+		        .usage = VMA_MEMORY_USAGE_AUTO
+	    	};
+	    	CHECK_VK_RESULT(vmaCreateBuffer(state.allocator, &uBufferCI, &uBufferAllocCI, &state.shaderDataBuffers[i].buffer, &state.shaderDataBuffers[i].allocation, &state.shaderDataBuffers[i].allocationInfo));
+
+		    VkBufferDeviceAddressInfo uBufferBdaInfo{
+		        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+		        .buffer = state.shaderDataBuffers[i].buffer
+		    };
+		    state.shaderDataBuffers[i].deviceAddress = vkGetBufferDeviceAddress(state.device, &uBufferBdaInfo);
+		}
+
+		VkSemaphoreCreateInfo semaphoreCI{
+		    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+		};
+		VkFenceCreateInfo fenceCI{
+		    .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		    .flags = VK_FENCE_CREATE_SIGNALED_BIT
+		};
+		for (uint32_t i = 0; i < maxFramesInFlight; i++) {
+		    CHECK_VK_RESULT(vkCreateFence(state.device, &fenceCI, nullptr, &state.fences[i]));
+		    CHECK_VK_RESULT(vkCreateSemaphore(state.device, &semaphoreCI, nullptr, &state.imageAcquiredSemaphores[i]));
+		}
+		state.renderCompleteSemaphores.resize(state.swapchainImages.size());
+		for (auto& semaphore : state.renderCompleteSemaphores) {
+		    CHECK_VK_RESULT(vkCreateSemaphore(state.device, &semaphoreCI, nullptr, &semaphore));
+		}
+
+		VkCommandPoolCreateInfo commandPoolCI{
+		    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		    .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+		    .queueFamilyIndex = queueFamily
+		};
+		CHECK_VK_RESULT(vkCreateCommandPool(state.device, &commandPoolCI, nullptr, &state.commandPool));
+
+		VkCommandBufferAllocateInfo cbAllocCI{
+		    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		    .commandPool = state.commandPool,
+		    .commandBufferCount = maxFramesInFlight
+		};
+		CHECK_VK_RESULT(vkAllocateCommandBuffers(state.device, &cbAllocCI, state.commandBuffers.data()));
+
+		// load texture
+		std::vector<VkDescriptorImageInfo> textureDescriptors{};
+		for (uint32_t i = 0; i < state.textures.size(); i++) {
+		    ktxTexture* ktxTexture{ nullptr };
+		    std::string filename = "assets/suzanne" + std::to_string(i) + ".ktx";
+		    ktxTexture_CreateFromNamedFile(filename.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
+
+			VkImageCreateInfo texImgCI{
+			    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			    .imageType = VK_IMAGE_TYPE_2D,
+			    .format = ktxTexture_GetVkFormat(ktxTexture),
+			    .extent = {.width = ktxTexture->baseWidth, .height = ktxTexture->baseHeight, .depth = 1 },
+			    .mipLevels = ktxTexture->numLevels,
+			    .arrayLayers = 1,
+			    .samples = VK_SAMPLE_COUNT_1_BIT,
+			    .tiling = VK_IMAGE_TILING_OPTIMAL,
+			    .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+			};
+			VmaAllocationCreateInfo texImageAllocCI{ .usage = VMA_MEMORY_USAGE_AUTO };
+			CHECK_VK_RESULT(vmaCreateImage(state.allocator, &texImgCI, &texImageAllocCI, &state.textures[i].image, &state.textures[i].allocation, nullptr));
+			
+			VkImageViewCreateInfo texViewCI{
+			    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			    .image = state.textures[i].image,
+			    .viewType = VK_IMAGE_VIEW_TYPE_2D,
+			    .format = texImgCI.format,
+			    .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = ktxTexture->numLevels, .layerCount = 1 }
+			};
+			CHECK_VK_RESULT(vkCreateImageView(state.device, &texViewCI, nullptr, &state.textures[i].view));
+
+			VkBuffer imgSrcBuffer{};
+			VmaAllocation imgSrcAllocation{};
+			VkBufferCreateInfo imgSrcBufferCI{
+			    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			    .size = (uint32_t)ktxTexture->dataSize,
+			    .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+			};
+			VmaAllocationCreateInfo imgSrcAllocCI{
+			    .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+			    .usage = VMA_MEMORY_USAGE_AUTO
+			};
+			VmaAllocationInfo imgSrcAllocInfo;
+			CHECK_VK_RESULT(vmaCreateBuffer(state.allocator, &imgSrcBufferCI, &imgSrcAllocCI, &imgSrcBuffer, &imgSrcAllocation, &imgSrcAllocInfo));
+
+			memcpy(imgSrcAllocInfo.pMappedData, ktxTexture->pData, ktxTexture->dataSize);
+
+			VkFenceCreateInfo fenceOneTimeCI {
+				.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO
+			};
+			VkFence fenceOneTime{};
+			CHECK_VK_RESULT(vkCreateFence(state.device, &fenceOneTimeCI, nullptr, &fenceOneTime));
+			VkCommandBuffer cbOneTime{};
+			VkCommandBufferAllocateInfo cbOneTimeAI{
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+				.commandPool = state.commandPool,
+				.commandBufferCount = 1
+			};
+			CHECK_VK_RESULT(vkAllocateCommandBuffers(state.device, &cbOneTimeAI, &cbOneTime));
+
+			VkCommandBufferBeginInfo cbOneTimeBI {
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+			};
+			CHECK_VK_RESULT(vkBeginCommandBuffer(cbOneTime, &cbOneTimeBI));
+			VkImageMemoryBarrier2 barrierTexImage {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+				.srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+				.srcAccessMask = VK_ACCESS_2_NONE,
+				.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+				.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				.image = state.textures[i].image,
+				.subresourceRange = {
+	   				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+	   				.levelCount = ktxTexture->numLevels,
+	   				.layerCount = 1 }
+			};
+			VkDependencyInfo barrierTexInfo {
+				.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+				.imageMemoryBarrierCount = 1,
+				.pImageMemoryBarriers = &barrierTexImage
+			};
+			vkCmdPipelineBarrier2(cbOneTime, &barrierTexInfo);
+			std::vector<VkBufferImageCopy> copyRegions{};
+			for (uint32_t j = 0; j < ktxTexture->numLevels; j++) {
+				ktx_size_t mipOffset{0};
+				KTX_error_code ret = ktxTexture_GetImageOffset(ktxTexture, j, 0, 0, &mipOffset);
+				copyRegions.push_back({
+					.bufferOffset = mipOffset,
+					.imageSubresource {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = (uint32_t)j, .layerCount = 1},
+					.imageExtent {.width = ktxTexture->baseWidth >> j, .height = ktxTexture->baseHeight >> j, .depth = 1}
+				});
+			}
+			vkCmdCopyBufferToImage(cbOneTime, 
+								   imgSrcBuffer, 
+								   state.textures[i].image, 
+								   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+								   static_cast<uint32_t>(copyRegions.size()), 
+								   copyRegions.data());
+			VkImageMemoryBarrier2 barrierTexRead {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+				.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+				.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+				.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				.newLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+				.image = state.textures[i].image,
+				.subresourceRange = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = ktxTexture->numLevels, .layerCount = 1 }
+			};
+			barrierTexInfo.pImageMemoryBarriers = &barrierTexRead;
+			vkCmdPipelineBarrier2(cbOneTime, &barrierTexInfo);
+			CHECK_VK_RESULT(vkEndCommandBuffer(cbOneTime));
+			VkCommandBufferSubmitInfo cbOneTimeSubmitInfo {
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+				.commandBuffer = cbOneTime
+			};
+			VkSubmitInfo2 oneTimeSI {
+				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+				.commandBufferInfoCount = 1,
+				.pCommandBufferInfos = &cbOneTimeSubmitInfo
+			};
+			CHECK_VK_RESULT(vkQueueSubmit2(state.queue, 1, &oneTimeSI, fenceOneTime));
+			CHECK_VK_RESULT(vkWaitForFences(state.device, 1, &fenceOneTime, VK_TRUE, UINT64_MAX));
+
+			// create texture sampler
+			VkSamplerCreateInfo samplerCI {
+				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+				.magFilter = VK_FILTER_LINEAR,
+				.minFilter = VK_FILTER_LINEAR,
+				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+				.anisotropyEnable = VK_TRUE,
+				.maxAnisotropy = 8.0f,
+				.maxLod = (float)ktxTexture->numLevels,
+			};
+			CHECK_VK_RESULT(vkCreateSampler(state.device, &samplerCI, nullptr, &state.textures[i].sampler));
+
+			ktxTexture_Destroy(ktxTexture);
+			textureDescriptors.push_back({
+				.sampler = state.textures[i].sampler,
+				.imageView = state.textures[i].view,
+				.imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL
+			});
+		}
+
+		VkDescriptorBindingFlags descVariableFlag {VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT };
+		VkDescriptorSetLayoutBindingFlagsCreateInfo descBindingFlags {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+			.bindingCount = 1,
+			.pBindingFlags = &descVariableFlag
+		};
+		VkDescriptorSetLayoutBinding descLayoutBindingTex {
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = static_cast<uint32_t>(state.textures.size()),
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+		};
+		VkDescriptorSetLayoutCreateInfo descLayoutTexCI {
+			.sType  = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.pNext = &descBindingFlags,
+			.bindingCount = 1,
+			.pBindings = &descLayoutBindingTex
+		};
+		CHECK_VK_RESULT(vkCreateDescriptorSetLayout(state.device, &descLayoutTexCI, nullptr, &state.descriptorSetLayoutTex));
+
+		VkDescriptorPoolSize poolSize {
+			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = static_cast<uint32_t>(state.textures.size())
+		};
+		VkDescriptorPoolCreateInfo descPoolCI {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.maxSets = 1,
+			.poolSizeCount = 1,
+			.pPoolSizes = &poolSize
+		};
+		CHECK_VK_RESULT(vkCreateDescriptorPool(state.device, &descPoolCI, nullptr, &state.descriptorPool));
+
+		uint32_t variableDescCount {static_cast<uint32_t>(state.textures.size()) };
+		VkDescriptorSetVariableDescriptorCountAllocateInfo variableDescCountAI {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO_EXT,
+			.descriptorSetCount = 1,
+			.pDescriptorCounts = &variableDescCount
+		};
+		VkDescriptorSetAllocateInfo texDescSetAlloc {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.pNext = &variableDescCountAI,
+			.descriptorPool = state.descriptorPool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &state.descriptorSetLayoutTex
+		};
+		CHECK_VK_RESULT(vkAllocateDescriptorSets(state.device, &texDescSetAlloc, &state.descriptorSetTex));
+
+		VkWriteDescriptorSet writeDescSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = state.descriptorSetTex,
+			.dstBinding = 0,
+			.descriptorCount = static_cast<uint32_t>(textureDescriptors.size()),
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = textureDescriptors.data()
+		};
+		vkUpdateDescriptorSets(state.device, 1, &writeDescSet, 0, nullptr);
 	}
 
 	printf("======================================================================\n\n\n");
