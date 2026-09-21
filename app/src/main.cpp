@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <vector>
+#include <iostream>
 
 // vulkan headers
 #include <vulkan/vulkan.h>
@@ -20,6 +21,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
 
 #include <tiny_obj_loader.h>
 
@@ -394,6 +397,7 @@ int main(int argc, char* argv[]) {
 			CHECK_VK_RESULT(vkCreateImageView(state.device, &viewCI, nullptr, &state.swapchainImageViews[i]));
 		}
 
+		// depth attachment
 		std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT };
 		VkFormat depthFormat = VK_FORMAT_UNDEFINED;
 		for (VkFormat& format : depthFormatList) {
@@ -462,6 +466,20 @@ int main(int argc, char* argv[]) {
 		    indices.push_back(static_cast<uint16_t>(indices.size()));
 		}
 
+		#if 0
+		printf("=======\n");
+		for (uint32_t i = 0; i < vertices.size(); i++) {
+			const Vertex& v = vertices[i];
+			printf("vertex[%5u]: pos  = < %4.1f, %4.1f, %4.1f >\n", i, v.pos.x, v.pos.y, v.pos.z);
+			printf("             : norm = < %4.1f, %4.1f, %4.1f >\n", v.normal.x, v.normal.y, v.normal.z);
+			printf("             : uv   = < %4.1f, %4.1f >\n", v.uv.x, v.uv.y);
+		}
+		for (uint32_t i = 0; i < indices.size(); i++) {
+			printf("index[%5u]: < %u >\n", i, indices[i]);
+		}
+		printf("=======\n");
+		#endif
+
 		state.vBufSize = sizeof(Vertex) * vertices.size();
 		state.iBufSize = sizeof(uint16_t) * indices.size();
 		VkBufferCreateInfo bufferCI{
@@ -480,6 +498,7 @@ int main(int argc, char* argv[]) {
 		memcpy(vBufferAllocInfo.pMappedData, vertices.data(), state.vBufSize);
 		memcpy(((char*)vBufferAllocInfo.pMappedData) + state.vBufSize, indices.data(), state.iBufSize);
 
+		// shader data buffers
 		for (uint32_t i = 0; i < maxFramesInFlight; i++) {
 		    VkBufferCreateInfo uBufferCI{
 		        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -499,6 +518,7 @@ int main(int argc, char* argv[]) {
 		    state.shaderDataBuffers[i].deviceAddress = vkGetBufferDeviceAddress(state.device, &uBufferBdaInfo);
 		}
 
+		// sync objects
 		VkSemaphoreCreateInfo semaphoreCI{
 		    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
 		};
@@ -515,6 +535,7 @@ int main(int argc, char* argv[]) {
 		    CHECK_VK_RESULT(vkCreateSemaphore(state.device, &semaphoreCI, nullptr, &semaphore));
 		}
 
+		// Command pool
 		VkCommandPoolCreateInfo commandPoolCI{
 		    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 		    .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -529,7 +550,7 @@ int main(int argc, char* argv[]) {
 		};
 		CHECK_VK_RESULT(vkAllocateCommandBuffers(state.device, &cbAllocCI, state.commandBuffers.data()));
 
-		// load texture
+		// load textures
 		std::vector<VkDescriptorImageInfo> textureDescriptors{};
 		for (uint32_t i = 0; i < state.textures.size(); i++) {
 		    ktxTexture* ktxTexture{ nullptr };
@@ -560,6 +581,7 @@ int main(int argc, char* argv[]) {
 			};
 			CHECK_VK_RESULT(vkCreateImageView(state.device, &texViewCI, nullptr, &state.textures[i].view));
 
+			// upload textures
 			VkBuffer imgSrcBuffer{};
 			VmaAllocation imgSrcAllocation{};
 			VkBufferCreateInfo imgSrcBufferCI{
@@ -573,7 +595,6 @@ int main(int argc, char* argv[]) {
 			};
 			VmaAllocationInfo imgSrcAllocInfo;
 			CHECK_VK_RESULT(vmaCreateBuffer(state.allocator, &imgSrcBufferCI, &imgSrcAllocCI, &imgSrcBuffer, &imgSrcAllocation, &imgSrcAllocInfo));
-
 			memcpy(imgSrcAllocInfo.pMappedData, ktxTexture->pData, ktxTexture->dataSize);
 
 			VkFenceCreateInfo fenceOneTimeCI {
@@ -890,6 +911,18 @@ int main(int argc, char* argv[]) {
 		}
 		memcpy(state.shaderDataBuffers[state.frameIndex].allocationInfo.pMappedData, &state.shaderData, sizeof(ShaderData));
 
+		#if 0
+		std::cout << "WindowSize: (" << state.windowSize.x << ", " << state.windowSize.y << ")\n";
+		std::cout << "Projection matrix: " << glm::to_string(shaderData.projection) << std::endl;
+		std::cout << "view matrix:       " << glm::to_string(shaderData.view) << std::endl;
+		std::cout << "model[0]:          " << glm::to_string(shaderData.model[0]) << std::endl;
+		std::cout << "  objectRotations[0]:" << glm::to_string(objectRotations[0]) << std::endl;
+		std::cout << "model[1]:          " << glm::to_string(shaderData.model[1]) << std::endl;
+		std::cout << "  objectRotations[1]:" << glm::to_string(objectRotations[1]) << std::endl;
+		std::cout << "model[2]:          " << glm::to_string(shaderData.model[2]) << std::endl;
+		std::cout << "  objectRotations[2]:" << glm::to_string(objectRotations[2]) << std::endl;
+		#endif
+
 		// Record command buffer
 		auto cb = state.commandBuffers[state.frameIndex];
 		CHECK_VK_RESULT(vkResetCommandBuffer(cb, 0));
@@ -1156,9 +1189,6 @@ static void __xdg_toplevel_handle_configure(void* data, xdg_toplevel* toplevel, 
 		state->resize = true;
 		state->new_width = width;
 		state->new_height = height;
-
-		state->windowSize.x = width;
-		state->windowSize.y = height;
 	}
 }
 static void __xdg_toplevel_handle_close(void* data, xdg_toplevel* toplevel) {
