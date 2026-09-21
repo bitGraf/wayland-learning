@@ -380,6 +380,19 @@ int main(int argc, char* argv[]) {
 		uint32_t imageViewCount = 0;
 		CHECK_VK_RESULT(vkGetSwapchainImagesKHR(state.device, state.swapchain, &imageCount, state.swapchainImages.data()));
 		state.swapchainImageViews.resize(imageCount);
+		for (uint32_t i = 0; i < imageCount; i++) {
+			VkImageViewCreateInfo viewCI {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.image = state.swapchainImages[i], 
+				.viewType = VK_IMAGE_VIEW_TYPE_2D,
+				.format = imageFormat,
+				.subresourceRange { 
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.levelCount = 1,
+					.layerCount = 1 }
+			};
+			CHECK_VK_RESULT(vkCreateImageView(state.device, &viewCI, nullptr, &state.swapchainImageViews[i]));
+		}
 
 		std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT };
 		VkFormat depthFormat = VK_FORMAT_UNDEFINED;
