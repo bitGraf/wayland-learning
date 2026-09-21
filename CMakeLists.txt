@@ -16,7 +16,7 @@ find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
 find_package(ktx CONFIG REQUIRED)
 get_property(targets_list DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY IMPORTED_TARGETS)
-# message(STATUS "imported targets: [${targets_list}]")
+message(STATUS "imported targets: [${targets_list}]")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

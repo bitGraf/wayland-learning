@@ -68,6 +68,13 @@ struct client_state {
 	VkSwapchainKHR swapchain;
 	VkSurfaceKHR vulkan_surface;
 	VmaAllocator allocator;
+	std::vector<VkImage> swapchainImages;
+	std::vector<VkImageView> swapchainImageViews;
+    VkImage depthImage;
+    VkImageView depthImageView;
+    VmaAllocation depthImageAllocation;
+	VkBuffer vBuffer;
+	VmaAllocation vBufferAllocation;
 
 	// program control
 	bool done = false;
@@ -75,6 +82,13 @@ struct client_state {
 	bool ready_to_resize = false;
 	int32_t new_width = 0;
 	int32_t new_height = 0;
+};
+
+// mesh loading
+struct Vertex {
+	glm::vec3 pos;
+	glm::vec3 normal;
+	glm::vec2 uv;
 };
 
 //
@@ -306,6 +320,98 @@ int main(int argc, char* argv[]) {
 			.presentMode = VK_PRESENT_MODE_FIFO_KHR
 		};
 		CHECK_VK_RESULT(vkCreateSwapchainKHR(state.device, &swapchainCreateInfo, nullptr, &state.swapchain));
+
+		uint32_t imageCount = 0;
+		CHECK_VK_RESULT(vkGetSwapchainImagesKHR(state.device, state.swapchain, &imageCount, nullptr));
+		state.swapchainImages.resize(imageCount);
+		uint32_t imageViewCount = 0;
+		CHECK_VK_RESULT(vkGetSwapchainImagesKHR(state.device, state.swapchain, &imageCount, state.swapchainImages.data()));
+		state.swapchainImageViews.resize(imageCount);
+
+		std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT };
+		VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+		for (VkFormat& format : depthFormatList) {
+		    VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
+		    vkGetPhysicalDeviceFormatProperties2(state.phys_device, format, &formatProperties);
+		    if (formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+		        depthFormat = format;
+		        break;
+		    }
+		}
+		VkImageCreateInfo depthImageCreateInfo {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = depthFormat,
+			.extent { .width = 900, .height = 600, .depth = 1},
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		};
+		VmaAllocationCreateInfo allocCreateInfo {
+			.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+			.usage = VMA_MEMORY_USAGE_AUTO
+		};
+		CHECK_VK_RESULT(vmaCreateImage(state.allocator, &depthImageCreateInfo, &allocCreateInfo, &state.depthImage, &state.depthImageAllocation, nullptr));
+
+		VkImageViewCreateInfo depthViewCreateInfo { 
+		    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		    .image = state.depthImage,
+		    .viewType = VK_IMAGE_VIEW_TYPE_2D,
+		    .format = depthFormat,
+		    .subresourceRange{ .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .levelCount = 1, .layerCount = 1 }
+		};
+		CHECK_VK_RESULT(vkCreateImageView(state.device, &depthViewCreateInfo, nullptr, &state.depthImageView));
+	}
+
+	{
+		VkResult result;
+
+		// load mesh
+		tinyobj::attrib_t attrib;
+		std::vector<tinyobj::shape_t> shapes;
+		std::vector<tinyobj::material_t> materials;
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, nullptr, nullptr, "assets/suzanne.obj")) {
+			printf("Failed to load .obj file!\n");
+			exit(-1);
+		}
+
+		const VkDeviceSize indexCount{shapes[0].mesh.indices.size()};   
+		std::vector<Vertex> vertices{};
+		std::vector<uint16_t> indices{};
+		// Load vertex and index data
+		for (auto& index : shapes[0].mesh.indices) {
+		    Vertex v{
+		        .pos = { attrib.vertices[index.vertex_index * 3], -attrib.vertices[index.vertex_index * 3 + 1], attrib.vertices[index.vertex_index * 3 + 2] },
+		        .normal = { attrib.normals[index.normal_index * 3], -attrib.normals[index.normal_index * 3 + 1], attrib.normals[index.normal_index * 3 + 2] },
+		        .uv = { attrib.texcoords[index.texcoord_index * 2], 1.0 - attrib.texcoords[index.texcoord_index * 2 + 1] }
+		    };
+		    vertices.push_back(v);
+		    indices.push_back(indices.size());
+		}
+
+		VkDeviceSize vBufSize{ sizeof(Vertex) * vertices.size() };
+		VkDeviceSize iBufSize{ sizeof(uint16_t) * indices.size() };
+		VkBufferCreateInfo bufferCI{
+		    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		    .size = vBufSize + iBufSize,
+		    .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+		};
+
+		VmaAllocationCreateInfo vBufferAllocCI{
+		    .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+		    .usage = VMA_MEMORY_USAGE_AUTO
+		};
+		VmaAllocationInfo vBufferAllocInfo{};
+		CHECK_VK_RESULT(vmaCreateBuffer(state.allocator, &bufferCI, &vBufferAllocCI, &state.vBuffer, &state.vBufferAllocation, &vBufferAllocInfo));
+
+		memcpy(vBufferAllocInfo.pMappedData, vertices.data(), vBufSize);
+		memcpy(((char*)vBufferAllocInfo.pMappedData) + vBufSize, indices.data(), iBufSize);
+	}
+
+	{
 	}
 
 	printf("======================================================================\n\n\n");
