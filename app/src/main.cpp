@@ -74,6 +74,7 @@ struct ShaderDataBuffer {
 constexpr uint32_t maxFramesInFlight {3};
 struct client_state {
 	// SDL
+	SDL_Window* window;
 
 	// Vulkan
 	VkInstance instance;
@@ -91,7 +92,6 @@ struct client_state {
     VmaAllocation depthImageAllocation;
 	VkBuffer vBuffer;
 	VmaAllocation vBufferAllocation;
-	ShaderData shaderData;
 	VkShaderModule shaderModule;
 	VkCommandPool commandPool;
 	struct Texture {
@@ -302,10 +302,10 @@ int main(int argc, char* argv[]) {
 	CHECK_VK_RESULT(vmaCreateAllocator(&allocatorCreateInfo, &state.allocator));
 
 	// SDL window and surface
-	SDL_Window* window = SDL_CreateWindow("SDL + Vulkan", 900u, 600u, SDL_WINDOW_VULKAN);
-	assert(window);
-	SDL_Vulkan_CreateSurface(window, state.instance, nullptr, &state.vulkan_surface);
-	SDL_GetWindowSize(window, &state.windowSize.x, &state.windowSize.y);
+	state.window = SDL_CreateWindow("SDL + Vulkan", 900u, 600u, SDL_WINDOW_VULKAN);
+	assert(state.window);
+	SDL_Vulkan_CreateSurface(state.window, state.instance, nullptr, &state.vulkan_surface);
+	SDL_GetWindowSize(state.window, &state.windowSize.x, &state.windowSize.y);
 
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	CHECK_VK_RESULT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state.phys_device, state.vulkan_surface, &surfaceCaps));
@@ -839,6 +839,7 @@ int main(int argc, char* argv[]) {
 	printf("  running...\n");
 	uint64_t lastTime = get_time_ms();
 	uint64_t startTime = get_time_ms();
+	float elapsedTime = 0.0f;
 	while (!state.done) {
 		VkResult result;
 
@@ -857,13 +858,16 @@ int main(int argc, char* argv[]) {
 		}
 
 		// Update shader data
+		objectRotations[1].x += 0.5f * elapsedTime;
+		objectRotations[1].y += 1.0f * elapsedTime;
+		objectRotations[1].z += 1.5f * elapsedTime;
 		shaderData.projection = glm::perspective(glm::radians(45.0f), (float)state.windowSize.x / (float)state.windowSize.y, 0.1f, 32.0f);
 		shaderData.view = glm::translate(glm::mat4(1.0f), camPos);
 		for (int i = 0; i < 3; i++) {
 			glm::vec3 instancePos = glm::vec3((float)(i-1) * 3.0f, 0.0f, 0.0f);
 			shaderData.model[i] = glm::translate(glm::mat4(1.0f), instancePos) * glm::mat4_cast(glm::quat(objectRotations[i]));
 		}
-		memcpy(state.shaderDataBuffers[state.frameIndex].allocationInfo.pMappedData, &state.shaderData, sizeof(ShaderData));
+		memcpy(state.shaderDataBuffers[state.frameIndex].allocationInfo.pMappedData, &shaderData, sizeof(ShaderData));
 
 		#if 0
 		std::cout << "WindowSize: (" << state.windowSize.x << ", " << state.windowSize.y << ")\n";
@@ -1034,10 +1038,18 @@ int main(int argc, char* argv[]) {
 		}
 
 		// Poll events
-		float elapsedTime = static_cast<float>(get_time_ms() - lastTime) / 1000.0f;
+		uint64_t now = get_time_ms();
+		elapsedTime = static_cast<float>(now - lastTime) / 1000.0f;
+		lastTime = now;
 		float totalTime = static_cast<float>(get_time_ms() - startTime) / 1000.0f;
+		float fps = 1.0f / elapsedTime;
+		char titleStr[256];
+		snprintf(titleStr, 256, "fps: %.1f", fps);
+		SDL_SetWindowTitle(state.window, titleStr);
+		SDL_Event e;
+		while(SDL_PollEvent(&e)) {}
 
-		if (totalTime > 2.0f) {
+		if (totalTime > 5.0f) {
 			state.done = true;
 		}
 	}

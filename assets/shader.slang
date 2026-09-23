@@ -30,8 +30,11 @@ struct VSOutput {
     uint32_t InstanceIndex;
 };
 
+[vk::push_constant]
+ShaderData* shaderData;
+
 [shader("vertex")]
-VSOutput main(VSInput input, uniform ShaderData *shaderData, uint instanceIndex : SV_VulkanInstanceID) {
+VSOutput main(VSInput input, /*uniform ShaderData *shaderData, */uint instanceIndex : SV_VulkanInstanceID) {
     VSOutput output;
     float4x4 modelMat = shaderData->model[instanceIndex];
     output.Normal = mul((float3x3)mul(shaderData->view, modelMat), input.Normal);

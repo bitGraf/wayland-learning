@@ -1,5 +1,13 @@
 #!/usr/bin/bash
 
+if [[ "$1" == "no_colors" ]]; then
+	S=''
+	E=''
+else
+	S='\033[1;33m'
+	E='\033[0m'
+fi
+
 # setup directory structure
 mkdir -p lbuild
 mkdir -p bin
@@ -9,14 +17,6 @@ mkdir -p bin
 export CC=clang
 export CXX=clang++
 generator="Ninja"
-
-if [[ "$1" == "no_colors" ]]; then
-	S=''
-	E=''
-else
-	S='\033[1;33m'
-	E='\033[0m'
-fi
 
 # # generate wayland headers/source
 # echo -e "$S[Generate wayland headers]$E"
