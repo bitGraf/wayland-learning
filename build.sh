@@ -18,10 +18,10 @@ else
 	E='\033[0m'
 fi
 
-# generate wayland headers/source
-echo -e "$S[Generate wayland headers]$E"
-wayland-scanner client-header < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > app/include/xdg/xdg-shell.h
-wayland-scanner private-code < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > app/src/xdg/xdg-shell.c
+# # generate wayland headers/source
+# echo -e "$S[Generate wayland headers]$E"
+# wayland-scanner client-header < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > app/include/xdg/xdg-shell.h
+# wayland-scanner private-code < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > app/src/xdg/xdg-shell.c
 
 # precompile shaders
 echo -e "$S[Precompile Shaders]$E"

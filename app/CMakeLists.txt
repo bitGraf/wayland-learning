@@ -6,7 +6,8 @@ add_executable(app)
 #file(GLOB_RECURSE app_SRC CONFIGURE_DEPENDS "src/*.cpp")
 file(GLOB_RECURSE app_SRC CONFIGURE_DEPENDS 
 	"src/*.cpp"
-	"src/*.c")
+# 	"src/*.c"
+)
 file(GLOB_RECURSE app_INC CONFIGURE_DEPENDS "include/*.h")
 
 # print out source and header files
@@ -31,6 +32,6 @@ target_sources(app
 		BASE_DIRS include
 		FILES ${app_INC})
 
-target_link_libraries(app PUBLIC wayland-client vulkan GPUOpen::VulkanMemoryAllocator glm::glm tinyobjloader::tinyobjloader ktx::ktx)
+target_link_libraries(app PUBLIC GPUOpen::VulkanMemoryAllocator glm::glm tinyobjloader::tinyobjloader ktx::ktx SDL3::SDL3-shared volk::volk_headers)
 target_compile_options(app PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wno-unused-parameter -Wno-unused-variable -Wno-attributes -Wno-missing-designated-field-initializers)
 target_compile_definitions(app PRIVATE _POSIX_C_SOURCE=200112L)

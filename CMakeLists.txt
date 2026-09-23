@@ -11,6 +11,8 @@ message("Project built with C compiler: ${CMAKE_C_COMPILER}")
 # find dependencies
 list(APPEND CMAKE_PREFIX_PATH "~/dev/vulkan-libs/")
 #message(STATUS ${CMAKE_MODULE_PATH})
+find_package(SDL3 REQUIRED)
+find_package(volk REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
